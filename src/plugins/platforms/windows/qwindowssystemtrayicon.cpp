@@ -73,6 +73,86 @@
 
 QT_BEGIN_NAMESPACE
 
+// shim for Shell_NotifyIconGetRect
+#include <shellapi.h>
+#include <windows.h>
+
+typedef HRESULT (WINAPI *PFN_Shell_NotifyIconGetRect)(
+    const NOTIFYICONIDENTIFIER *identifier, RECT *iconLocation);
+
+static inline HRESULT Shell_NotifyIconGetRect_Runtime(const NOTIFYICONIDENTIFIER *id, RECT *r)
+{
+  static PFN_Shell_NotifyIconGetRect p =
+      (PFN_Shell_NotifyIconGetRect)GetProcAddress(GetModuleHandleA("shell32.dll"),
+                                                  "Shell_NotifyIconGetRect");
+  if (p) return p(id, r);  // real API available (Win7+)
+
+  if (!r) return E_POINTER;
+
+  // approximate with the notification area window rect
+  HWND hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+  HWND hTray    = hTaskbar ? FindWindowExW(hTaskbar, NULL, L"TrayNotifyWnd", NULL) : NULL;
+
+  if ((hTray    && GetWindowRect(hTray, r)) ||
+      (hTaskbar && GetWindowRect(hTaskbar, r))) {
+    return S_OK;
+  }
+
+  SetRectEmpty(r);
+  return E_FAIL;
+}
+
+// force all calls in this TU to go through the shim
+#ifdef Shell_NotifyIconGetRect
+#  undef Shell_NotifyIconGetRect
+#endif
+#define Shell_NotifyIconGetRect(id, r) Shell_NotifyIconGetRect_Runtime((id), (r))
+// end shim
+
+// shim for ChangeWindowMessageFilterEx
+#include <windows.h>
+
+typedef BOOL (WINAPI *PFN_CWMFE)(HWND,UINT,DWORD,PCHANGEFILTERSTRUCT);
+typedef BOOL (WINAPI *PFN_CWMF)(UINT,DWORD);
+
+#ifndef MSGFLT_ALLOW
+  #define MSGFLT_ALLOW    1
+  #define MSGFLT_DISALLOW 2
+#endif
+#ifndef MSGFLT_ADD
+  #define MSGFLT_ADD      1
+  #define MSGFLT_REMOVE   2
+#endif
+
+#ifndef PCHANGEFILTERSTRUCT
+  struct tagCHANGEFILTERSTRUCT;
+  typedef tagCHANGEFILTERSTRUCT CHANGEFILTERSTRUCT;
+  typedef CHANGEFILTERSTRUCT* PCHANGEFILTERSTRUCT;
+#endif
+
+static inline BOOL ChangeWindowMessageFilterEx_Runtime(HWND h, UINT msg, DWORD action, PCHANGEFILTERSTRUCT cfs)
+{
+  static PFN_CWMFE pEx  = (PFN_CWMFE)GetProcAddress(GetModuleHandleA("user32.dll"), "ChangeWindowMessageFilterEx");
+  if (pEx) return pEx(h, msg, action, cfs);
+
+  static PFN_CWMF  pOld = (PFN_CWMF) GetProcAddress(GetModuleHandleA("user32.dll"), "ChangeWindowMessageFilter");
+  if (pOld) {
+    DWORD oldAct = (action == MSGFLT_ALLOW) ? MSGFLT_ADD :
+                   (action == MSGFLT_DISALLOW) ? MSGFLT_REMOVE : (DWORD)-1;
+    if (oldAct == (DWORD)-1) { SetLastError(ERROR_INVALID_PARAMETER); return FALSE; }
+    return pOld(msg, oldAct);
+  }
+
+  // nothing to do
+  return TRUE;
+}
+
+#ifdef ChangeWindowMessageFilterEx
+  #undef ChangeWindowMessageFilterEx
+#endif
+#define ChangeWindowMessageFilterEx(h, m, a, c) ChangeWindowMessageFilterEx_Runtime((h),(m),(a),(c))
+// end shim
+
 static const UINT q_uNOTIFYICONID = 0;
 
 static uint MYWM_TASKBARCREATED = 0;
