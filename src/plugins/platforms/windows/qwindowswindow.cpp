@@ -86,6 +86,62 @@
 
 QT_BEGIN_NAMESPACE
 
+// shims for Register/Unregister/IsTouchWindow
+#include <windows.h>
+
+typedef BOOL (WINAPI *PFN_RegisterTouchWindow)(HWND, ULONG);
+typedef BOOL (WINAPI *PFN_UnregisterTouchWindow)(HWND);
+typedef BOOL (WINAPI *PFN_IsTouchWindow)(HWND, PULONG);
+
+static inline BOOL RegisterTouchWindow_Runtime(HWND hwnd, ULONG flags)
+{
+  static PFN_RegisterTouchWindow p =
+      (PFN_RegisterTouchWindow)GetProcAddress(GetModuleHandleA("user32.dll"),
+                                              "RegisterTouchWindow");
+  if (p) return p(hwnd, flags);
+  // succeed as no-op
+  return TRUE;
+}
+
+static inline BOOL UnregisterTouchWindow_Runtime(HWND hwnd)
+{
+  static PFN_UnregisterTouchWindow p =
+      (PFN_UnregisterTouchWindow)GetProcAddress(GetModuleHandleA("user32.dll"),
+                                                "UnregisterTouchWindow");
+  if (p) return p(hwnd);
+  // nothing to unregister
+  return TRUE;
+}
+
+static inline BOOL IsTouchWindow_Runtime(HWND hwnd, PULONG pFlags)
+{
+  static PFN_IsTouchWindow p =
+      (PFN_IsTouchWindow)GetProcAddress(GetModuleHandleA("user32.dll"),
+                                        "IsTouchWindow");
+  if (p) return p(hwnd, pFlags);
+
+  // report not a touch window
+  if (pFlags) *pFlags = 0;
+  return FALSE;
+}
+
+// force all calls in this TU to go through the shims
+#ifdef RegisterTouchWindow
+  #undef RegisterTouchWindow
+#endif
+#define RegisterTouchWindow(h, f) RegisterTouchWindow_Runtime((h), (f))
+
+#ifdef UnregisterTouchWindow
+  #undef UnregisterTouchWindow
+#endif
+#define UnregisterTouchWindow(h) UnregisterTouchWindow_Runtime((h))
+
+#ifdef IsTouchWindow
+  #undef IsTouchWindow
+#endif
+#define IsTouchWindow(h, pf) IsTouchWindow_Runtime((h), (pf))
+// end shims
+
 using QWindowCreationContextPtr = QSharedPointer<QWindowCreationContext>;
 
 enum {
